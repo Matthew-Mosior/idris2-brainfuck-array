@@ -1,0 +1,16 @@
+[custom.all.idris2-brainfuck-array]
+type = "local"
+path = "."
+ipkg = "idris2-brainfuck-array.ipkg"
+test = "test/test.ipkg"
+
+[custom.all.idris2-brainfuck-array-test]
+type = "local"
+path = "test"
+ipkg = "test.ipkg"
+
+[custom.all.array]
+type   = "git"
+url    = "https://github.com/Matthew-Mosior/idris2-array"
+commit = "latest:grow"
+ipkg   = "array.ipkg"
