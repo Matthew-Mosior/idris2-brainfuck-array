@@ -1,12 +1,14 @@
 module Main
 
 import Data.Array.Core
+import Data.Array.Index
 import Data.Array.Mutable
 import Data.Bits as B
 import Network.Socket as Skt
 import System as Sys
 import System.File as F
 import System.File.Process as SFP
+import Syntax.T1
 
 data IncType =
     PositiveInc
@@ -22,10 +24,18 @@ data Op =
   | Print
   | Loop (List Op)
 
-data Tape : Type where
-  MkTape :  (tapedata : MArray 0 Nat)
+{-
+data Tape : Nat -> Type where
+  MkTape :  (tapedata : MArray n Nat)
          -> (tapepos  : Nat)
-         -> Tape
+         -> Tape n
+-}
+record Tape (n : Nat) where
+  constructor MkTape
+  tapedata : MArray n Nat
+  tapepos  : Nat
+--  {auto 0 lt : LT tapepos n}
+--  {auto 0 lte : LTE tapepos n}
 
 data Printer : Type where
   MkPrinter :  (sum1 : Nat)
@@ -54,52 +64,46 @@ getChecksum (MkPrinter sum1' sum2' _) =
   integerToNat
     (((natToInteger sum2') `shiftL` 8) .|. (natToInteger sum1'))
 
-parameters {0 rs : Resources}
-           {n : Nat}
-           (r : MArray n a)
-           {auto 0 p : Res r rs}
+parameters {n : Nat}
+           (tape : Tape n)
+           {0 rs : Resources}
+           {auto 0 p : Res tape.tapedata rs}
 
-  current :  Tape
-          -> {auto 0 _ : LT m n}
-          -> Nat
-  current (MkTape tapedata' tapepos') t =
-    let v # t := getNat tapedata' tapepos'
-      in v
+  current :  {auto 0 _ : LT tape.tapepos n}
+          -> F1 rs Nat
+  current t =
+    getNat tape.tapedata tape.tapepos t
 
-  inc :  Nat
+  inc :  (delta : Nat)
       -> IncType
-      -> Tape
-      -> {auto 0 lte : LTE k n}
-      -> Tape
-  inc delta PositiveInc tape@(MkTape tapedata' tapepos') tgt t =
-    let prev        = current tape 
-        tapedata'' := setNat tgt prev {lt = ltAddLeft lte} (prev `plus` delta) t
-      in MkTape tgt tapepos'
-  inc delta NegativeInc tape@(MkTape tapedata' tapepos') tgt t =
-    let prev        = current tape
-        tapedata'' := setNat tgt prev {lt = ltAddLeft lte} (prev `minus` delta) t
-      in MkTape tapedata'' tapepos'
+      -> {auto 0 _ : LT tape.tapepos n}
+      -> F1' rs
+  inc delta PositiveInc t =
+    let prev # t := getNat tape.tapedata tape.tapepos t
+      in setNat tape.tapedata tape.tapepos (prev `plus` delta) t
+  inc delta NegativeInc t =
+    let prev # t := getNat tape.tapedata tape.tapepos t
+      in setNat tape.tapedata tape.tapepos (prev `minus` delta) t
 
-  move :  Nat
+  move :  (m : Nat)
        -> MoveType
-       -> Tape
-       -> Tape
-  move m PositiveMove tape@(MkTape tapedata' tapepos') =
-    let tapepos'' = tapepos' `plus` m
-      in case tapepos'' < n of
+       -> A1 [] (Tape n)
+  move m PositiveMove =
+    let tapepos' = tape.tapepos `plus` m
+      in case tapepos' < n of
            True  =>
-             MkTape tapedata' tapepos''
+             pure $ MkTape tape.tapedata tapepos'
            False =>
-             let tapedata'' = grow
-               in MkTape tapedata'' tapepos''        
-  move m NegativeMove tape@(MkTape tapedata' tapepos') =
-    let tapepos'' = tapepos' `minus` m
-      in case tapepos'' < n of
+             let tapedata' # t := mgrow1 tape.tapedata m 0
+               in A (MkTape tapedata' tapepos') t
+  move m NegativeMove =
+    let tapepos' = tape.tapepos `minus` m
+      in case tapepos' < n of
            True  =>
-             MkTape tapedata' tapepos''
+             pure $ MkTape tape.tapedata tapepos'
            False =>
-             let tapedata'' = grow
-               in MkTape tapedata'' tapepos''
+             let tapedata' # t := mgrow1 tape.tapedata m 0
+               in A (MkTape tapedata' tapepos') t
 
 parse :  List Char
       -> List Op
