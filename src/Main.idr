@@ -1,6 +1,6 @@
 module Main
 
-import Data.Array.Core
+import Data.Array.Core as Array
 import Data.Array.Index
 import Data.Array.Mutable
 import Data.Bits as B
@@ -208,47 +208,67 @@ parse cs =
       _   => loop (cs, acc)
 
 partial
-run' : List Op
-    -> Tape
-    -> Printer
+run' :  List Op
+     -> (tp : Tape)
+     -> (p : Printer)
 --    -> F1 [IO Tape] (Tape, Printer)
-    -> F1 [World] (IO (Tape, Printer))
+     -> (1 t : T1 [tp.arr])
+     -> Res1 (Tape, Printer) (\x => [x.arr]) --(Tape, Printer)
+--     -> IO (Tape, Printer)
+--     -> (1 t' : T1 [p])
+--     -> Res1 (Tape, Printer) (\x => [])
+--     -> F1 [] (Tape, Printer)
 --    -> IO (Tape, Printer)
 --    -> (1 t : T1 [tp.arr])
---    -> Res1 (IO Tape) (\x => [x.arr])
-run' Nil         tape p t =
-  pure (tape, p) t
-run' (op :: ops) tape p t =
+--    -> Res1 Tape (\x => [x.arr])
+run' Nil         tp p t =
+  (tp, p) # t
+run' (op :: ops) tp p t =
   case op of
     (Inc PositiveInc d)   =>
-      run' ops (inc d PositiveInc tape) p t
+      let _ # t := inc d PositiveInc tp t
+        in run' ops tp p t
+      --run' ops (inc d PositiveInc tp) p t
     (Inc NegativeInc d)   =>
-      run' ops (inc d NegativeInc tape) p t
+      let _ # t := inc d NegativeInc tp t
+        in run' ops tp p t
     (Move PositiveMove m) =>
-      run' ops (move m PositiveMove tape) p t
+      let tp' # t := move m PositiveMove tp t
+        in run' ops tp' p t
+      --run' ops (move m PositiveMove tp) p t
+      --run' ops !(runIO $ move m PositiveMove tp) p t
     (Move NegativeMove m) =>
-      run' ops (move m NegativeMove tape) p t
-    Print                 => do
-      let x = current tape
-      newp <- write p x
-      run' ops tape newp t
-    Loop body             => do
-      case current tape of
+      let tp' # t := move m NegativeMove tp t
+        in run' ops tp p t
+      --run' ops (move m NegativeMove tp) p t
+      --run' ops !(runIO $ move m NegativeMove tp) p t
+    Print                 => -- T1.do
+      let x # t := current tp t
+      --newp      <- write p x
+        in run' ops tp !(write p x) t
+    Loop body             => --T1.do
+      case current tp of
         Z =>
-          run' ops tape p t
-        _ => do
-          (tape', p') <- run' body tape p t
-          run' (op :: ops) tape' p' t
+          run' ops tp p t
+        _ => T1.do
+          (tp', p') <- run' body tp p t
+          run' (op :: ops) tp' p' t
 
 verify : IO (Either String ())
 verify = do
   let src      = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++."
-      ops      = parse $ fastUnpack src
-      empty    = fill 1 0
+  --    ops      = parse $ fastUnpack src
+  --    empty    = fill 1 0
       pempty   = MkPrinter Z Z True
-  (_, pleft)   <- run' ops
-                       (MkTape empty Z)
-                       pempty
+  --(_, pleft)   <- run' ops
+  --                     (MkTape empty Z)
+  --                     pempty
+  pleft <-
+    pure $ run1 $ \t =>
+      let ops             = parse $ fastUnpack src
+          tape       # t := newMArray 1 Z t
+          (_, pleft) # t := run' ops (T tape FZ) (MkPrinter Z Z True) t
+        in pleft # t
   let left     = getChecksum pleft
   pright       <- foldlM (\p, c => write p $ the Nat (cast $ ord c))
                          pempty
@@ -287,13 +307,23 @@ main = do
       --(_, newp) <- run ops (MkTape (fill 1 0) Z) (MkPrinter Z Z True)
       --(_, newp) <- run ops (T (newMArray 1 0) FZ) (MkPrinter Z Z True)
       --(_, newp) <- unsafeCreate 0 (run ops (MkPrinter Z Z True))
-      (_, newp) <- runIO $ \t =>
-                     let ops       = parse $ fastUnpack src
-                         tape # t := newMArray 1 Z t
-                       in run' ops (T tape FZ) (MkPrinter Z Z True) t
+      newp <-
+        runIO $ \t =>
+          let ops            = parse $ fastUnpack src
+              tape      # t := newMArray 1 Z t
+              (_, newp) # t := run' ops (T tape FZ) (MkPrinter Z Z True) t
+              _         # t := Array.release tape t
+            in newp # t
+          --    newp # t := run' ops (T tape FZ) (MkPrinter Z Z True) t
+          --  in newp # t
       notify "stop"
       putStrLn $ "Output checksum: " ++ show (getChecksum newp)
     Nothing => do
-      let ops   = parse $ fastUnpack src
-      (_, newp) <- run ops (MkTape (fill 1 0) Z) (MkPrinter Z Z False)
+      --let ops   = parse $ fastUnpack src
+      newp <-
+        runIO $ \t =>
+          let ops            = parse $ fastUnpack src
+              tape      # t := newMArray 1 Z t
+              (_, newp) # t := run' ops (T tape FZ) (MkPrinter Z Z True) t
+            in newp # t
       notify "stop"
