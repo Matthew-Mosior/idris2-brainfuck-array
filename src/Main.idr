@@ -1,4 +1,4 @@
-module NMain
+module Main
 
 import Data.Array.Core as Array
 import Data.Array.Index
