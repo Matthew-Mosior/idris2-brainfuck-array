@@ -27,10 +27,10 @@ data Op =
   | Print
   | Loop (List Op)
 
-record Tape where
-  constructor T
+record Tape (s : Type) where
+  constructor MkTape
   {size : Nat}
-  arr   : IOArray size Nat
+  arr   : MArray s size Nat
   pos   : Fin size
 
 data Printer : Type where
@@ -69,10 +69,10 @@ finMinusLT (FS x) m = ?finMinusLT_rhs_1
 --finPlusLT (FS x) m = %search -- ?finPlusLT_rhs_1
 
 %inline
-current : (tp : Tape) -> F1 [tp.arr] Nat
+current : (tp : Tape s) -> F1 s Nat
 current tp = get tp.arr tp.pos
 
-inc : (delta : Nat) -> IncType -> (tp : Tape) -> F1' [tp.arr]
+inc : (delta : Nat) -> IncType -> (tp : Tape s) -> F1' s
 inc delta PositiveInc tp = modify tp.arr tp.pos (+ delta)
 inc delta NegativeInc tp = modify tp.arr tp.pos (`minus` delta)
 
@@ -87,16 +87,15 @@ plus x m =
 
 move :  (m : Nat)
      -> MoveType
-     -> (tp : Tape)
-     -> (1 t : T1 [tp.arr])
-     -> Res1 Tape (\x => [x.arr])
-move m NegativeMove (T arr pos) t = T arr (pos `minus` m) # t
-move m PositiveMove (T arr pos) t =
+     -> (tp : Tape s)
+     -> F1 s (Tape s)
+move m NegativeMove (MkTape arr pos) = MkTape arr (pos `minus` m)
+move m PositiveMove (MkTape arr pos) =
   case plus pos m of
-    Left  p2 => T arr p2 # t
-    Right p2 =>
-      let arr2 # t := mgrow arr m 0 t
-        in T arr2 p2 # t
+    Left  p2 => MkTape arr p2
+    Right p2 => do
+      arr2 <- mgrow arr m 0
+      pure (MkTape arr2 p2)
 
 parse :  List Char
       -> List Op
@@ -113,15 +112,16 @@ parse cs =
       '>' => loop (cs, (Move PositiveMove 1)  :: acc)
       '<' => loop (cs, (Move NegativeMove 1) :: acc)
       '.' => loop (cs, Print :: acc)
-      '[' => let (cs', body) = loop (cs, []) in loop (cs', Loop body :: acc)
+      '[' => let (cs', body) = loop (cs, [])
+               in loop (cs', Loop body :: acc)
       ']' => (cs, reverse acc)
       _   => loop (cs, acc)
 
 partial
 run :  List Op
-    -> (tp : Tape)
+    -> (tp : Tape s)
     -> (p : Printer)
-    -> IO (Tape, Printer)
+    -> IO ((Tape s), Printer)
 run Nil         tp p =
   pure (tp, p)
 run (op :: ops) tp p =
@@ -156,7 +156,7 @@ verify = do
       pempty   = MkPrinter Z Z True
   pleft <- do
     tape       <- marray 1 Z
-    (_, pleft) <- run ops (T tape FZ) (MkPrinter Z Z True)
+    (_, pleft) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
     pure pleft
   let left     = getChecksum pleft
   pright       <- foldlM (\p, c => write p $ the Nat (cast $ ord c))
@@ -194,10 +194,10 @@ main = do
   case quiet of
     Just _  => do
       tape      <- marray 1 Z 
-      (_, newp) <- run ops (T tape FZ) (MkPrinter Z Z True)
+      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
       notify "stop"
       putStrLn $ "Output checksum: " ++ show (getChecksum newp)
     Nothing => do
       tape      <- marray 1 Z
-      (_, newp) <- run ops (T tape FZ) (MkPrinter Z Z True)
+      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
       notify "stop"
