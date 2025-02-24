@@ -12,6 +12,7 @@ import System.File.Process as SFP
 import Syntax.T1
 
 %hide System.run
+%hide Data.Array.Index.inc
 
 data IncType =
     PositiveInc
@@ -76,6 +77,10 @@ inc : (delta : Nat) -> IncType -> (tp : Tape s) -> F1' s
 inc delta PositiveInc tp = modify tp.arr tp.pos (+ delta)
 inc delta NegativeInc tp = modify tp.arr tp.pos (`minus` delta)
 
+--inc : {size : Nat} -> (delta : Nat) -> IncType -> MArray s size Nat -> Fin size -> F1' s
+--inc delta PositiveInc arr pos = modify arr pos (+ delta)
+--inc delta NegativeInc arr pos = modify arr pos (`minus` delta)
+
 minus : Fin n -> Nat -> Fin n
 minus x m = natToFinLT (finToNat x `minus` m) @{finMinusLT _ _}
 
@@ -89,13 +94,13 @@ move :  (m : Nat)
      -> MoveType
      -> (tp : Tape s)
      -> F1 s (Tape s)
-move m NegativeMove (MkTape arr pos) = MkTape arr (pos `minus` m)
-move m PositiveMove (MkTape arr pos) =
+move m NegativeMove (MkTape arr pos) t = MkTape arr (pos `minus` m) # t
+move m PositiveMove (MkTape arr pos) t =
   case plus pos m of
-    Left  p2 => MkTape arr p2
-    Right p2 => do
-      arr2 <- mgrow arr m 0
-      pure (MkTape arr2 p2)
+    Left  p2 => MkTape arr p2 # t
+    Right p2 =>
+      let arr2 # t := mgrow arr m 0 t
+        in MkTape arr2 p2 # t
 
 parse :  List Char
       -> List Op
@@ -142,7 +147,7 @@ run (op :: ops) tp p =
       x <- runIO (current tp)
       run ops tp !(write p x)
     Loop body             =>
-      case current tp of
+      case !(runIO (current tp)) of
         Z =>
           run ops tp p
         _ => do
