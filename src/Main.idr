@@ -28,10 +28,10 @@ data Op =
   | Print
   | Loop (List Op)
 
-record Tape where
+record Tape (s : Type) where
   constructor MkTape
   {size : Nat}
-  arr   : IOArray size Nat
+  arr   : MArray s size Nat
   pos   : Fin size
 
 data Printer : Type where
@@ -70,16 +70,12 @@ finMinusLT (FS x) m = ?finMinusLT_rhs_1
 --finPlusLT (FS x) m = %search -- ?finPlusLT_rhs_1
 
 %inline
-current : (tp : Tape) -> F1 World Nat
+current : (tp : (Tape World)) -> F1 World Nat
 current tp = get tp.arr tp.pos
 
-inc : (delta : Nat) -> IncType -> (tp : Tape) -> F1' World
+inc : (delta : Nat) -> IncType -> (tp : Tape World) -> F1' World
 inc delta PositiveInc tp = modify tp.arr tp.pos (+ delta)
 inc delta NegativeInc tp = modify tp.arr tp.pos (`minus` delta)
-
---inc : {size : Nat} -> (delta : Nat) -> IncType -> MArray s size Nat -> Fin size -> F1' s
---inc delta PositiveInc arr pos = modify arr pos (+ delta)
---inc delta NegativeInc arr pos = modify arr pos (`minus` delta)
 
 minus : Fin n -> Nat -> Fin n
 minus x m = natToFinLT (finToNat x `minus` m) @{finMinusLT _ _}
@@ -92,15 +88,15 @@ plus x m =
 
 move :  (m : Nat)
      -> MoveType
-     -> (tp : Tape)
-     -> F1 World Tape
-move m NegativeMove (MkTape arr pos) t = MkTape arr (pos `minus` m) # t
-move m PositiveMove (MkTape arr pos) t =
+     -> (tp : Tape World)
+     -> F1 World (Tape World)
+move m NegativeMove (MkTape arr pos) = pure (MkTape arr (pos `minus` m))
+move m PositiveMove (MkTape arr pos) =
   case plus pos m of
-    Left  p2 => MkTape arr p2 # t
-    Right p2 =>
-      let arr2 # t := mgrow arr m 0 t
-        in MkTape arr2 p2 # t
+    Left  p2 => pure (MkTape arr p2)
+    Right p2 => do
+      arr2 <- mgrow arr m 0
+      pure (MkTape arr2 p2)
 
 parse :  List Char
       -> List Op
@@ -124,9 +120,9 @@ parse cs =
 
 partial
 run :  List Op
-    -> (tp : Tape)
+    -> (tp : Tape World)
     -> (p : Printer)
-    -> IO (Tape, Printer)
+    -> IO (Tape World, Printer)
 run Nil         tp p =
   pure (tp, p)
 run (op :: ops) tp p =
@@ -198,7 +194,7 @@ main = do
   notify $ "Idris (Array)\t" ++ show pid
   case quiet of
     Just _  => do
-      tape      <- marray 1 Z 
+      tape      <- marray 1 Z
       (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
       notify "stop"
       putStrLn $ "Output checksum: " ++ show (getChecksum newp)
