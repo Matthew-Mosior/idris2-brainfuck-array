@@ -200,5 +200,5 @@ main = do
       putStrLn $ "Output checksum: " ++ show (getChecksum newp)
     Nothing => do
       tape      <- marray 1 Z
-      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
+      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z False)
       notify "stop"
