@@ -65,10 +65,6 @@ getChecksum (MkPrinter sum1' sum2' _) =
 finMinusLT FZ     m = %search
 finMinusLT (FS x) m = ?finMinusLT_rhs_1
 
---0 finPlusLT : (x : Fin v) -> (m : Nat) -> LT (finToNat x `plus` m) n
---finPlusLT FZ     m = %search
---finPlusLT (FS x) m = %search -- ?finPlusLT_rhs_1
-
 %inline
 current : (tp : (Tape World)) -> F1 World Nat
 current tp = get tp.arr tp.pos
@@ -84,7 +80,7 @@ plus : {n : _} -> Fin n -> (m : Nat) -> Either (Fin n) (Fin (m+n))
 plus x m =
   case tryNatToFin (finToNat x + m) of
     Just y  => Left y
-    Nothing => Right $ natToFinLT (finToNat x + m) @{?bar} -- @{finPlusLT _ _}
+    Nothing => Right $ natToFinLT (finToNat x + m) @{?bar}
 
 move :  (m : Nat)
      -> MoveType
