@@ -91,7 +91,7 @@ move m PositiveMove (MkTape arr pos) =
   case plus pos m of
     Left  p2 => pure (MkTape arr p2)
     Right p2 => do
-      arr2 <- mgrow arr m 0
+      arr2 <- Array.mgrow arr m--mgrow arr m 0
       pure (MkTape arr2 p2)
 
 parse :  List Char
