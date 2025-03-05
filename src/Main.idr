@@ -1,170 +1,154 @@
 module Main
 
+import Data.String
 import Data.Array.Core as Array
 import Data.Array.Index
 import Data.Array.Mutable
 import Data.Bits as B
 import Data.Linear.Ref1
+import Data.Linear.Traverse1
 import Network.Socket as Skt
 import System as Sys
 import System.File as F
 import System.File.Process as SFP
-import Syntax.T1
 
-%hide System.run
-%hide Data.Array.Index.inc
+%foreign "scheme:(lambda (a x) (vector-ref a x))"
+prim__arrget : AnyPtr -> Integer -> AnyPtr
 
-data IncType =
-    PositiveInc
-  | NegativeInc
+%foreign "scheme:(lambda (a x v) (vector-set! a x v))"
+prim__arrset : AnyPtr -> Integer -> AnyPtr -> PrimIO ()
                 
-data MoveType =
-    PositiveMove
-  | NegativeMove
+%inline
+arrget : MArray s n a -> Integer -> F1 s a
+arrget arr n t = believe_me (prim__arrget (believe_me arr) n) # t
+
+%inline
+arrset : MArray s n a -> Integer -> a -> F1 s ()
+arrset arr n v = ffi (prim__arrset (believe_me arr) n (believe_me v))
+
+%inline
+arrmod : MArray s n a -> Integer -> (a -> a) -> F1 s ()
+arrmod arr n f t =
+  let v # t := arrget arr n t
+   in arrset arr n (f v) t
 
 data Op =
-    Inc IncType Nat
-  | Move MoveType Nat
+    Inc
+  | Dec
+  | MovL
+  | MovR
   | Print
   | Loop (List Op)
 
-record Tape (s : Type) where
-  constructor MkTape
-  {size : Nat}
-  arr   : MArray s size Nat
-  pos   : Fin size
-
-data Printer : Type where
-  MkPrinter :  (sum1 : Nat)
-            -> (sum2 : Nat)
-            -> (quiet : Bool)
-            -> Printer
-
-write :  Printer
-      -> Nat
-      -> IO Printer
-write p@(MkPrinter sum1' sum2' quiet') n =
-  case quiet' of
-    True  =>
-      let s1 = mod (sum1' `plus` n) 255
-          s2 = mod (s1 `plus` sum2') 255
-        in pure $
-             MkPrinter s1 s2 True
-    False => do
-      putStr $ fastPack $ ((chr $ (the Int (cast n))) :: Nil)
-      SFP.fflush stdout
-      pure p
-
-getChecksum :  Printer
-            -> Nat
-getChecksum (MkPrinter sum1' sum2' _) =
-  integerToNat
-    (((natToInteger sum2') `shiftL` 8) .|. (natToInteger sum1'))
-
-0 finMinusLT : (x : Fin n) -> (m : Nat) -> LT (finToNat x `minus` m) n
-finMinusLT FZ     m = %search
-finMinusLT (FS x) m = ?finMinusLT_rhs_1
-
-%inline
-current : (tp : (Tape World)) -> F1 World Nat
-current tp = get tp.arr tp.pos
-
-inc : (delta : Nat) -> IncType -> (tp : Tape World) -> F1' World
-inc delta PositiveInc tp = modify tp.arr tp.pos (+ delta)
-inc delta NegativeInc tp = modify tp.arr tp.pos (`minus` delta)
-
-minus : Fin n -> Nat -> Fin n
-minus x m = natToFinLT (finToNat x `minus` m) @{finMinusLT _ _}
-
-plus : {n : _} -> Fin n -> (m : Nat) -> Either (Fin n) (Fin (m+n))
-plus x m =
-  case tryNatToFin (finToNat x + m) of
-    Just y  => Left y
-    Nothing => Right $ natToFinLT (finToNat x + m) @{?bar}
-
-move :  (m : Nat)
-     -> MoveType
-     -> (tp : Tape World)
-     -> F1 World (Tape World)
-move m NegativeMove (MkTape arr pos) = pure (MkTape arr (pos `minus` m))
-move m PositiveMove (MkTape arr pos) =
-  case plus pos m of
-    Left  p2 => pure (MkTape arr p2)
-    Right p2 => do
-      arr2 <- Array.mgrow arr m--mgrow arr m 0
-      pure (MkTape arr2 p2)
-
-parse :  List Char
-      -> List Op
+parse : List Char -> List Op
 parse cs =
-  let (_, ops) = loop (cs, [])
+  let (_, ops) = go [<] cs
     in ops
   where
-    loop :  (List Char, List Op)
-         -> (List Char, List Op)
-    loop (Nil, acc)     = (Nil, reverse acc)
-    loop (c :: cs, acc) = case c of
-      '+' => loop (cs, (Inc PositiveInc 1) :: acc)
-      '-' => loop (cs, (Inc NegativeInc 1) :: acc)
-      '>' => loop (cs, (Move PositiveMove 1)  :: acc)
-      '<' => loop (cs, (Move NegativeMove 1) :: acc)
-      '.' => loop (cs, Print :: acc)
-      '[' => let (cs', body) = loop (cs, [])
-               in loop (cs', Loop body :: acc)
-      ']' => (cs, reverse acc)
-      _   => loop (cs, acc)
+    go :  SnocList Op -> List Char -> (List Char, List Op)
+    go acc  []       = ([], acc <>> [])
+    go acc (c :: cs) =
+      case c of
+        '+' => go (acc :< Inc) cs
+        '-' => go (acc :< Dec) cs
+        '>' => go (acc :< MovR) cs
+        '<' => go (acc :< MovL) cs
+        '.' => go (acc :< Print) cs
+        '[' => let (cs', body) = go [<] cs
+                 in go (acc :< Loop body) cs'
+        ']' => (cs, acc <>> [])
+        _   => go acc cs
 
-partial
-run :  List Op
-    -> (tp : Tape World)
-    -> (p : Printer)
-    -> IO (Tape World, Printer)
-run Nil         tp p =
-  pure (tp, p)
-run (op :: ops) tp p =
-  case op of
-    (Inc PositiveInc d)   => do
-      () <- runIO (inc d PositiveInc tp)
-      run ops tp p
-    (Inc NegativeInc d)   => do
-      () <- runIO (inc d NegativeInc tp)
-      run ops tp p
-    (Move PositiveMove m) => do
-      tp' <- runIO (move m PositiveMove tp)
-      run ops tp' p
-    (Move NegativeMove m) => do
-      tp' <- runIO (move m NegativeMove tp)
-      run ops tp' p
-    Print                 => do
-      x <- runIO (current tp)
-      run ops tp !(write p x)
-    Loop body             =>
-      case !(runIO (current tp)) of
-        Z =>
-          run ops tp p
-        _ => do
-          (tp', p') <- run body tp p
-          run (op :: ops) tp' p'
+record Printer where
+  constructor P
+  sum1  : IORef Integer
+  sum2  : IORef Integer
+  quiet : Bool
 
-verify : IO (Either String ())
-verify = do
-  let src      = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++."
-      ops      = parse $ fastUnpack src
-      pempty   = MkPrinter Z Z True
-  pleft <- do
-    tape       <- marray 1 Z
-    (_, pleft) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
-    pure pleft
-  let left     = getChecksum pleft
-  pright       <- foldlM (\p, c => write p $ the Nat (cast $ ord c))
-                         pempty
-                         (fastUnpack "Hello World!\n")
-  let right    = getChecksum pright
-  case left == right of
+printer : Bool -> F1 World Printer
+printer q t =
+  let s1 # t := ref1 0 t
+      s2 # t := ref1 0 t
+   in P s1 s2 q # t
+
+write : Printer -> Integer -> F1' World
+write (P sm1 sm2 q) n t =
+  case q of
     True  =>
-      pure $ Right ()
+      let sum1 # t := read1 sm1 t
+          sum2 # t := read1 sm2 t
+          s1       := mod (sum1 + n) 255
+          s2       := mod (s1 + sum2) 255
+          _ # t    := write1 sm1 s1 t
+        in write1 sm2 s2 t
     False =>
-      pure $ Left $ show left ++ " != " ++ show right
+      let _ # t := ioToF1 (putStr $ singleton (cast n)) t
+        in ioToF1 (SFP.fflush stdout) t
+
+getChecksum : Printer -> F1 World Integer
+getChecksum (P s1 s2 _) t =
+  let sum1' # t := read1 s1 t
+      sum2' # t := read1 s2 t
+    in ((sum2' `shiftL` 8) .|. sum1') # t
+
+record Tape where
+  constructor T
+  {size : Nat}
+  arr   : IOArray size Integer
+  pos   : Integer
+
+%inline
+predFin : Fin n -> Fin n
+predFin FZ     = FZ
+predFin (FS k) = weaken k
+
+incPos : Fin n -> Fin (n+n)
+incPos n = believe_me (FS n)
+
+parameters (p : Printer)
+
+  covering
+  runBF : {n : _} -> List Op -> Integer -> IOArray n Integer -> F1 World Tape
+  runBF []             pos arr t = T arr pos # t
+  runBF os@(op :: ops) pos arr t =
+    case op of
+      Inc  => let _ # t := arrmod arr pos (+1) t
+                in runBF ops pos arr t
+      Dec  => let _ # t := arrmod arr pos (\x => x-1) t
+                in runBF ops pos arr t
+      MovL => runBF ops (pos - 1) arr t
+      MovR =>
+        let p2 := pos+1
+          in case prim__lt_Integer p2 (cast n) of
+               0 => let arr2 # t := mgrow arr n 0 t
+                      in runBF ops p2 arr2 t
+               _ => runBF ops p2 arr t
+      Print     =>
+        let x # t := arrget arr pos t
+            _ # t := write p x t
+          in runBF ops pos arr t
+      Loop body =>
+        let v # t := arrget arr pos t
+          in case v of
+               0 => runBF ops pos arr t
+               _ => let T arr2 pos2 # t := runBF body pos arr t
+                      in runBF os pos2 arr2 t
+
+src : String
+src =  "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++."
+
+verify : F1 World (Either String ())
+verify t =
+  let p1    # t := printer True t
+      p2    # t := printer True t
+      arr   # t := marray1 1 0 t
+      _     # t := runBF p1 (parse $ unpack src) 0 arr t
+      left  # t := getChecksum p1 t
+      _     # t := traverse1_ (\c => write p2 $ (cast $ ord c)) (fastUnpack "Hello World!\n") t
+      right # t := getChecksum p2 t
+    in case left == right of
+         True  => Right () # t
+         False => Left (show left ++ " != " ++ show right) # t
 
 partial
 notify : String -> IO ()
@@ -176,25 +160,32 @@ notify msg = do
     | Left err => die $ "Error in call to send: " ++ show err
   close skt
 
-partial
+covering
+main1 : F1' World
+main1 t =
+  let Right ()  # t := verify t | Left err # t => ioToF1 (die err) t
+      [_, fn]   # t := ioToF1 getArgs t | as # t => ioToF1 (die "invalid args: \{show as}") t
+      Right src # t := ioToF1 (readFile fn) t
+        | Left err # t => ioToF1 (die $ "Error reading file: " ++ show err) t
+      ops           :=  parse $ fastUnpack src 
+      quiet     # t := ioToF1 (getEnv "QUIET") t
+      pid       # t := ioToF1 getPID t
+      ops           := parse $ unpack src
+      _         # t := ioToF1 (notify $ "Idris (Array)\t" ++ show pid) t
+    in case quiet of
+         Just _  =>
+           let p1    # t := printer True t
+               arr   # t := marray1 1 0 t
+               _     # t := runBF p1 ops 0 arr t
+               check # t := getChecksum p1 t
+               _     # t := ioToF1 (notify "stop") t
+             in ioToF1 (putStrLn $ "Output checksum: " ++ show check) t
+         Nothing =>
+           let p1  # t := printer False t
+               arr # t := marray1 1 0 t
+               _   # t := runBF p1 ops 0 arr  t
+             in ioToF1 (notify "stop") t
+
+covering
 main : IO ()
-main = do
-  Right () <- verify
-    | Left err => die err
-  [_, fn]   <- getArgs
-  Right src <- readFile fn
-    | Left err => die $ "Error reading file: " ++ show err
-  let ops   =  parse $ fastUnpack src 
-  quiet     <- getEnv "QUIET"
-  pid       <- getPID
-  notify $ "Idris (Array)\t" ++ show pid
-  case quiet of
-    Just _  => do
-      tape      <- marray 1 Z
-      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z True)
-      notify "stop"
-      putStrLn $ "Output checksum: " ++ show (getChecksum newp)
-    Nothing => do
-      tape      <- marray 1 Z
-      (_, newp) <- run ops (MkTape tape FZ) (MkPrinter Z Z False)
-      notify "stop"
+main = runIO main1
